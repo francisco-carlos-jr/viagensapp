@@ -1,6 +1,6 @@
 /**
  * Calendário de Viagens - Escala 12×36
- * Persistência: localStorage + data.json como seed
+ * Persistência: GitHub API (Contents API) para data.json compartilhado
  */
 
 (function () {
@@ -9,18 +9,23 @@
   // ===== CONSTANTES =====
   const MOTORISTAS = ['CHICO', 'CLAUDINEI', 'NILTON', 'PABLO'];
   const DATA_INICIO = new Date(2026, 3, 1); // 1 de Abril de 2026
-  const STORAGE_KEY = 'viagensApp_dados';
+  const CONFIG_KEY = 'viagensApp_config';
   const NOMES_MESES = [
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
   ];
   const ANO_MIN = 2026;
   const ANO_MAX = 2035;
+  const GITHUB_API = 'https://api.github.com';
+  const FILE_PATH = 'data.json';
 
   // ===== ESTADO =====
   let mesAtual = new Date().getMonth();
   let anoAtual = new Date().getFullYear();
-  let dados = {}; // { "2026-04-01": "CHICO", "2026-04-03": "NILTON", ... }
+  let dados = {}; // { "2026-04-01": "CHICO", ... }
+  let fileSha = null; // SHA do arquivo no GitHub (necessário para atualizações)
+  let config = { owner: '', repo: '', token: '' };
+  let salvando = false;
 
   // ===== ELEMENTOS DOM =====
   const telaSelecao = document.getElementById('tela-selecao');
@@ -38,30 +43,239 @@
   const tfootResumo = document.getElementById('tfoot-resumo-anual');
   const resumoAnoLabel = document.getElementById('resumo-ano-label');
 
+  // Modal
+  const modalOverlay = document.getElementById('modal-overlay');
+  const btnConfig = document.getElementById('btn-config');
+  const btnFecharModal = document.getElementById('btn-fechar-modal');
+  const btnSalvarConfig = document.getElementById('btn-salvar-config');
+  const inputOwner = document.getElementById('input-owner');
+  const inputRepo = document.getElementById('input-repo');
+  const inputToken = document.getElementById('input-token');
+  const configStatus = document.getElementById('config-status');
+
+  // Sync indicator
+  const syncIndicator = document.getElementById('sync-indicator');
+  const syncText = document.getElementById('sync-text');
+
   // ===== INICIALIZAÇÃO =====
-  function init() {
-    carregarDados();
+  async function init() {
+    carregarConfig();
     preencherSelectAno();
     setSelectMesAnoAtual();
     bindEventos();
+
+    if (configValida()) {
+      await carregarDadosGitHub();
+    } else {
+      setSyncStatus('sem-config', '⚙️ Configure o GitHub');
+      abrirModal();
+    }
+
     atualizarResumoAnual();
   }
 
-  function carregarDados() {
-    const salvo = localStorage.getItem(STORAGE_KEY);
+  // ===== CONFIGURAÇÃO =====
+  function carregarConfig() {
+    const salvo = localStorage.getItem(CONFIG_KEY);
     if (salvo) {
       try {
-        dados = JSON.parse(salvo);
+        config = JSON.parse(salvo);
       } catch (e) {
-        dados = {};
+        config = { owner: '', repo: '', token: '' };
       }
     }
   }
 
-  function salvarDados() {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(dados));
+  function salvarConfig() {
+    localStorage.setItem(CONFIG_KEY, JSON.stringify(config));
   }
 
+  function configValida() {
+    return config.owner && config.repo && config.token;
+  }
+
+  function abrirModal() {
+    inputOwner.value = config.owner || '';
+    inputRepo.value = config.repo || '';
+    inputToken.value = config.token || '';
+    configStatus.className = 'config-status';
+    configStatus.textContent = '';
+    modalOverlay.classList.add('ativo');
+  }
+
+  function fecharModal() {
+    modalOverlay.classList.remove('ativo');
+  }
+
+  async function onSalvarConfig() {
+    const owner = inputOwner.value.trim();
+    const repo = inputRepo.value.trim();
+    const token = inputToken.value.trim();
+
+    if (!owner || !repo || !token) {
+      mostrarConfigStatus('erro', 'Preencha todos os campos.');
+      return;
+    }
+
+    config = { owner, repo, token };
+    salvarConfig();
+
+    mostrarConfigStatus('', 'Testando conexão...');
+    btnSalvarConfig.disabled = true;
+
+    try {
+      await carregarDadosGitHub();
+      mostrarConfigStatus('sucesso', '✅ Conectado com sucesso!');
+      atualizarResumoAnual();
+
+      setTimeout(() => fecharModal(), 1200);
+    } catch (err) {
+      mostrarConfigStatus('erro', `❌ Erro: ${err.message}`);
+    } finally {
+      btnSalvarConfig.disabled = false;
+    }
+  }
+
+  function mostrarConfigStatus(tipo, msg) {
+    configStatus.className = `config-status ${tipo}`;
+    configStatus.style.display = 'block';
+    configStatus.textContent = msg;
+  }
+
+  // ===== GITHUB API =====
+  function githubHeaders() {
+    return {
+      'Authorization': `token ${config.token}`,
+      'Accept': 'application/vnd.github.v3+json',
+      'Content-Type': 'application/json'
+    };
+  }
+
+  async function carregarDadosGitHub() {
+    setSyncStatus('sincronizando', 'Carregando...');
+
+    try {
+      const url = `${GITHUB_API}/repos/${config.owner}/${config.repo}/contents/${FILE_PATH}`;
+      const resp = await fetch(url, { headers: githubHeaders() });
+
+      if (resp.status === 404) {
+        // Arquivo não existe ainda, criar com dados vazios
+        dados = {};
+        fileSha = null;
+        await salvarDadosGitHub('Criação inicial do data.json');
+        setSyncStatus('sincronizado', 'Sincronizado');
+        return;
+      }
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.message || `HTTP ${resp.status}`);
+      }
+
+      const json = await resp.json();
+      fileSha = json.sha;
+
+      // Decodifica o conteúdo (base64)
+      const conteudo = decodeURIComponent(
+        atob(json.content).split('').map(c =>
+          '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)
+        ).join('')
+      );
+
+      const parsed = JSON.parse(conteudo);
+      dados = parsed.viagens || {};
+
+      setSyncStatus('sincronizado', 'Sincronizado');
+    } catch (err) {
+      setSyncStatus('erro-sync', 'Erro de conexão');
+      throw err;
+    }
+  }
+
+  async function salvarDadosGitHub(mensagem) {
+    if (!configValida()) {
+      setSyncStatus('sem-config', '⚙️ Configure o GitHub');
+      return;
+    }
+
+    if (salvando) return;
+    salvando = true;
+    setSyncStatus('sincronizando', 'Salvando...');
+
+    try {
+      // Primeiro, buscar SHA atual para evitar conflitos
+      const urlGet = `${GITHUB_API}/repos/${config.owner}/${config.repo}/contents/${FILE_PATH}`;
+      const respGet = await fetch(urlGet, { headers: githubHeaders() });
+
+      if (respGet.ok) {
+        const jsonGet = await respGet.json();
+        fileSha = jsonGet.sha;
+      }
+
+      const conteudoJson = JSON.stringify({
+        motoristas: MOTORISTAS,
+        dataInicio: "2026-04-01",
+        viagens: dados
+      }, null, 2);
+
+      // Codifica para base64 (com suporte a UTF-8)
+      const conteudoBase64 = btoa(
+        encodeURIComponent(conteudoJson).replace(/%([0-9A-F]{2})/g, (_, p1) =>
+          String.fromCharCode(parseInt(p1, 16))
+        )
+      );
+
+      const body = {
+        message: mensagem || 'Atualização de viagens',
+        content: conteudoBase64,
+        branch: 'main'
+      };
+
+      if (fileSha) {
+        body.sha = fileSha;
+      }
+
+      const url = `${GITHUB_API}/repos/${config.owner}/${config.repo}/contents/${FILE_PATH}`;
+      const resp = await fetch(url, {
+        method: 'PUT',
+        headers: githubHeaders(),
+        body: JSON.stringify(body)
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.message || `HTTP ${resp.status}`);
+      }
+
+      const result = await resp.json();
+      fileSha = result.content.sha;
+
+      setSyncStatus('sincronizado', 'Sincronizado');
+    } catch (err) {
+      console.error('Erro ao salvar:', err);
+      setSyncStatus('erro-sync', 'Erro ao salvar');
+    } finally {
+      salvando = false;
+    }
+  }
+
+  // Debounce para não fazer muitos commits seguidos
+  let salvarTimeout = null;
+  function salvarDadosDebounce() {
+    if (salvarTimeout) clearTimeout(salvarTimeout);
+    setSyncStatus('sincronizando', 'Aguardando...');
+    salvarTimeout = setTimeout(() => {
+      salvarDadosGitHub('Atualização de viagens');
+    }, 2000); // Espera 2 segundos após a última alteração
+  }
+
+  // ===== SYNC INDICATOR =====
+  function setSyncStatus(tipo, texto) {
+    syncIndicator.className = `sync-indicator visivel ${tipo}`;
+    syncText.textContent = texto;
+  }
+
+  // ===== EVENTOS =====
   function preencherSelectAno() {
     for (let a = ANO_MIN; a <= ANO_MAX; a++) {
       const opt = document.createElement('option');
@@ -76,13 +290,20 @@
     selectAno.value = anoAtual;
   }
 
-  // ===== EVENTOS =====
   function bindEventos() {
     btnAbrir.addEventListener('click', abrirCalendario);
     btnVoltar.addEventListener('click', voltarSelecao);
     btnAnterior.addEventListener('click', mesAnterior);
     btnProximo.addEventListener('click', mesProximo);
     selectAno.addEventListener('change', atualizarResumoAnual);
+
+    // Config
+    btnConfig.addEventListener('click', abrirModal);
+    btnFecharModal.addEventListener('click', fecharModal);
+    btnSalvarConfig.addEventListener('click', onSalvarConfig);
+    modalOverlay.addEventListener('click', function (e) {
+      if (e.target === modalOverlay) fecharModal();
+    });
 
     // Clique nas linhas do resumo anual para abrir o mês
     tbodyResumo.addEventListener('click', function (e) {
@@ -137,22 +358,13 @@
   }
 
   // ===== LÓGICA 12x36 =====
-  /**
-   * Verifica se uma data é dia de viagem no esquema 12x36
-   * Padrão: trabalha dia 1, folga dia 2, trabalha dia 3, etc.
-   * Baseado na diferença de dias a partir de DATA_INICIO
-   */
   function isDiaViagem(data) {
-    // Calcula a diferença em dias entre a data e DATA_INICIO
     const umDia = 24 * 60 * 60 * 1000;
     const inicio = new Date(DATA_INICIO.getFullYear(), DATA_INICIO.getMonth(), DATA_INICIO.getDate());
     const alvo = new Date(data.getFullYear(), data.getMonth(), data.getDate());
     const diffDias = Math.round((alvo - inicio) / umDia);
 
-    // Se diffDias < 0, a data é antes do início das viagens
     if (diffDias < 0) return false;
-
-    // Dia de viagem: a cada 2 dias (0, 2, 4, 6, ...)
     return diffDias % 2 === 0;
   }
 
@@ -168,17 +380,14 @@
     const primeiroDia = new Date(anoAtual, mesAtual, 1);
     const ultimoDia = new Date(anoAtual, mesAtual + 1, 0);
     const diasNoMes = ultimoDia.getDate();
-    const diaSemanaInicio = primeiroDia.getDay(); // 0=Dom, 1=Seg...
+    const diaSemanaInicio = primeiroDia.getDay();
 
     const hoje = new Date();
 
-    // Células vazias antes do dia 1
     for (let i = 0; i < diaSemanaInicio; i++) {
-      const celula = criarCelulaVazia();
-      calendarioDias.appendChild(celula);
+      calendarioDias.appendChild(criarCelulaVazia());
     }
 
-    // Dias do mês
     for (let d = 1; d <= diasNoMes; d++) {
       const data = new Date(anoAtual, mesAtual, d);
       const viagem = isDiaViagem(data);
@@ -192,7 +401,6 @@
       calendarioDias.appendChild(celula);
     }
 
-    // Células vazias após o último dia (completar a semana)
     const totalCelulas = diaSemanaInicio + diasNoMes;
     const celulasRestantes = totalCelulas % 7 === 0 ? 0 : 7 - (totalCelulas % 7);
     for (let i = 0; i < celulasRestantes; i++) {
@@ -245,14 +453,13 @@
         } else {
           delete dados[chave];
         }
-        salvarDados();
+        salvarDadosDebounce();
         renderizarResumoMensal();
         atualizarBadgeMotorista(div, valor);
       });
 
       div.appendChild(select);
 
-      // Badge do motorista se já atribuído
       if (motorista) {
         const mBadge = document.createElement('span');
         mBadge.className = `motorista-badge ${motorista.toLowerCase()}`;
@@ -265,7 +472,6 @@
   }
 
   function atualizarBadgeMotorista(celula, motorista) {
-    // Remove badge existente
     const badgeExistente = celula.querySelector('.motorista-badge');
     if (badgeExistente) badgeExistente.remove();
 
@@ -349,7 +555,6 @@
       tbodyResumo.appendChild(tr);
     }
 
-    // Total
     const trTotal = document.createElement('tr');
     let tdTotal = '<td>TOTAL</td>';
     MOTORISTAS.forEach(m => {

@@ -11,6 +11,39 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
+  <!-- Modal de Configuração GitHub -->
+  <div id="modal-overlay" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3>⚙️ Configuração GitHub</h3>
+        <button id="btn-fechar-modal" class="btn-fechar-modal">&times;</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">Para que todos os motoristas compartilhem os mesmos dados, o sistema salva as informações diretamente no repositório GitHub via API.</p>
+        <div class="form-grupo">
+          <label for="input-owner">Dono do Repositório</label>
+          <input type="text" id="input-owner" placeholder="ex: francisco-carlos-jr">
+        </div>
+        <div class="form-grupo">
+          <label for="input-repo">Nome do Repositório</label>
+          <input type="text" id="input-repo" placeholder="ex: viagensapp">
+        </div>
+        <div class="form-grupo">
+          <label for="input-token">Token de Acesso (GitHub)</label>
+          <input type="password" id="input-token" placeholder="ghp_xxxxxxxxxxxx">
+          <small class="form-ajuda">Crie em GitHub → Settings → Developer settings → Personal access tokens.<br>Permissão necessária: <strong>repo</strong> (ou <strong>public_repo</strong>).</small>
+        </div>
+        <button id="btn-salvar-config" class="btn-primario btn-full">Salvar Configuração</button>
+        <div id="config-status" class="config-status"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Indicador de Sincronização -->
+  <div id="sync-indicator" class="sync-indicator">
+    <span id="sync-text">Conectando...</span>
+  </div>
+
   <div id="app">
     <!-- Tela 1: Seleção de Mês/Ano -->
     <section id="tela-selecao" class="tela ativa">
@@ -25,6 +58,12 @@
           </div>
           <h1>Calendário de Viagens</h1>
           <p class="subtitulo">Gerenciamento de Escalas 12×36</p>
+          <button id="btn-config" class="btn-config" title="Configurações">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="18" height="18">
+              <circle cx="12" cy="12" r="3"/>
+              <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+            </svg>
+          </button>
         </header>
 
         <div class="seletor-periodo">
