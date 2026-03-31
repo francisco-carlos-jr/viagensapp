@@ -159,17 +159,33 @@
       const resp = await fetch(url, { headers: githubHeaders() });
 
       if (resp.status === 404) {
-        // Arquivo não existe ainda, criar com dados vazios
-        dados = {};
+        // 404 do arquivo: ele não existe no repositório ainda.
+        // Vamos tentar ler o local apenas para ver se há dados, caso não, inicia vazio.
         fileSha = null;
-        await salvarDadosGitHub('Criação inicial do data.json');
+        
+        try {
+          const respLocal = await fetch(FILE_PATH);
+          if (respLocal.ok) {
+            const jsonLocal = await respLocal.json();
+            dados = jsonLocal.viagens || {};
+          } else { dados = {}; }
+        } catch(e) { dados = {}; }
+
+        await salvarDadosGitHub('Criação inicial do data.json via app');
         setSyncStatus('sincronizado', 'Sincronizado');
         return;
       }
 
+      if (resp.status === 401) {
+        throw new Error("Token do GitHub inválido ou expirado.");
+      }
+
       if (!resp.ok) {
         const err = await resp.json();
-        throw new Error(err.message || `HTTP ${resp.status}`);
+        if (resp.status === 404 && err.message === "Not Found") {
+          throw new Error("Repositório não encontrado. Verifique Dono/Repositório e se o Token tem permissão 'repo'.");
+        }
+        throw new Error(err.message || `Erro HTTP ${resp.status}`);
       }
 
       const json = await resp.json();
@@ -227,8 +243,8 @@
 
       const body = {
         message: mensagem || 'Atualização de viagens',
-        content: conteudoBase64,
-        branch: 'main'
+        content: conteudoBase64
+        // branch: 'main' removido para pegar o branch padrão (main ou master) automaticamente
       };
 
       if (fileSha) {
@@ -244,6 +260,9 @@
 
       if (!resp.ok) {
         const err = await resp.json();
+        if (resp.status === 404) {
+          throw new Error("Repositório nulo ou vazio (sem branch inicial) ou sem acesso.");
+        }
         throw new Error(err.message || `HTTP ${resp.status}`);
       }
 
