@@ -1,5 +1,12 @@
 {
-  "motoristas": ["CHICO", "CLAUDINEI", "NILTON", "PABLO"],
+  "motoristas": [
+    "CHICO",
+    "CLAUDINEI",
+    "NILTON",
+    "PABLO"
+  ],
   "dataInicio": "2026-04-01",
-  "viagens": {}
+  "viagens": {
+    "2026-04-01": "CHICO"
+  }
 }
