@@ -95,8 +95,8 @@
   }
 
   function abrirModal() {
-    inputOwner.value = config.owner || '';
-    inputRepo.value = config.repo || '';
+    inputOwner.value = config.owner || 'francisco-carlos-jr';
+    inputRepo.value = config.repo || 'viagensapp';
     inputToken.value = config.token || '';
     configStatus.className = 'config-status';
     configStatus.textContent = '';
